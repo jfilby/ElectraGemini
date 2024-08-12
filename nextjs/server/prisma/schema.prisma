@@ -1,0 +1,981 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "core"]
+}
+
+// NextAuth
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@schema("public")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+}
+
+model User {
+  id                String    @id @default(cuid())
+  name              String?
+  email             String?   @unique
+  emailVerified     DateTime?
+  image             String?
+
+  accounts          Account[]
+  sessions          Session[]
+
+  // App-specific
+  userProfiles      UserProfile[]
+
+  @@schema("public")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@schema("public")
+}
+
+// Serene Core: User Management (non-NextAuth)
+model UserGroup {
+  id                        String          @id @default(cuid())
+  name                      String          @unique
+  created                   DateTime        @default(now())
+  updated                   DateTime        @updatedAt
+
+  ofUserGroupMembers           UserGroupMember[]
+
+  @@map("user_group")
+  @@schema("public")
+}
+
+model UserGroupMember {
+  id                        String          @id @default(cuid())
+  userGroupId               String          @map("user_group_id")
+  userGroup                 UserGroup       @relation(fields: [userGroupId], references: [id])
+  userProfileId             String          @map("user_profile_id")
+  userProfile               UserProfile     @relation(fields: [userProfileId], references: [id])
+  created                   DateTime        @default(now())
+
+  @@unique([userProfileId, userGroupId], name: "user_group_member_uq")
+  @@map("user_group_member")
+  @@schema("public")
+}
+
+model UserPreference {
+  id                        String          @id @default(cuid())
+  userProfileId             String          @map("user_profile_id")
+  userProfile               UserProfile     @relation(fields: [userProfileId], references: [id])
+  category                  String
+  key                       String
+  value                     String?
+  values                    String[]
+  created                   DateTime        @default(now())
+
+  @@unique([userProfileId, key], name: "user_preference_uq")
+  @@map("user_preference")
+  @@schema("public")
+}
+
+model UserProfile {
+  id                          String       @id @default(cuid())
+  userId                      String?      @map("user_id") @unique  // Map to NextAuth's User model
+  user                        User?        @relation(fields: [userId], references: [id])
+  isAdmin                     Boolean      @map("is_admin")
+  isTestUser                  Boolean?     @map("is_test_user")     // Should eventually be not null
+
+  // Non-core fields
+  ownerType                   String?      @db.Char(1) @map("owner_type")  // Human or Bot
+  roles                       String[]
+
+  ofUserGroupMembers           UserGroupMember[]
+  ofUserPreferences            UserPreference[]
+  ofRateLimitedApiEvents       RateLimitedApiEvent[]
+  ofTipGotIts                  TipGotIt[]
+
+  ofBatchJobs                  BatchJob[]
+
+  ofAgents                     Agent[]
+  ofChatParticipants           ChatParticipant[]
+  ofChatSessions               ChatSession[]
+  ofChatSettings               ChatSettings[]
+
+  ofInstanceChatSessions       InstanceChatSession[]
+  ofInstances                  Instance[]
+  ofKbFilesCreatedBy           KbFile[]             @relation("created_by")
+  ofKbFilesAssignedTo          KbFile[]             @relation("assigned_to")
+  ofTasksCreatedBy             Task[]               @relation("created_by")
+  ofTasksAssignedTo            Task[]               @relation("assigned_to")
+  ofTaskNotesCreatedBy         TaskNote[]           @relation("created_by")
+  ofVotes                      Vote[]
+
+  @@map("user_profile")
+  @@schema("public")
+}
+
+// Serene Core
+
+model SystemProperty {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  value        String?
+
+  @@map("system_property")
+  @@schema("core")
+}
+
+model Tip {
+  id                           String               @id @default(cuid())
+  name                         String               @unique
+  tags                         String[]
+
+  ofTipGotIts                  TipGotIt[]
+
+  @@index([tags])
+  @@map("tip")
+  @@schema("public")
+}
+
+model TipGotIt {
+  id                           String               @id @default(cuid())
+  tipId                        String               @map("tip_id")
+  tip                          Tip                  @relation(fields: [tipId], references: [id])
+  userProfileId                String               @map("user_profile_id")
+  userProfile                  UserProfile          @relation(fields: [userProfileId], references: [id])
+
+  @@unique([tipId, userProfileId], name: "tip_got_it_uq")
+  @@index([userProfileId])
+  @@map("tip_got_it")
+  @@schema("public")
+}
+
+// Generic tech
+model RateLimitedApi {
+  id                           String               @id @default(cuid())
+  techId                       String?              @map("tech_id")
+  tech                         Tech?                @relation(fields: [techId], references: [id])
+  ratePerMinute                Int                  @map("rate_per_minute")
+
+  ofRateLimitedApiEvents       RateLimitedApiEvent[]
+
+  @@map("rate_limited_api")
+  @@schema("public")
+}
+
+model RateLimitedApiEvent {
+  // Using a separate table from ChatMessage, because ChatMessage is populated
+  // after the LLM API returns, but the rate limited event should be tracked
+  // from just before the API call is made.
+  id                           String               @id @default(cuid())
+  rateLimitedApiId             String               @map("api_rate_limited_id")
+  rateLimitedApi               RateLimitedApi       @relation(fields: [rateLimitedApiId], references: [id])
+  userProfileId                String               @map("user_profile_id")
+  userProfile                  UserProfile          @relation(fields: [userProfileId], references: [id])
+  created                      DateTime             @default(now())
+
+  @@index([created])
+  @@map("rate_limited_api_event")
+  @@schema("public")
+}
+
+model Tech {
+  id                           String               @id @default(cuid())
+  isDefaultProvider            Boolean              @map("is_default_provider")
+  variantName                  String               @map("variant_name") @unique
+  provides                     String
+
+  ofChatSettings               ChatSettings[]
+  ofRateLimitedApis            RateLimitedApi[]
+
+  @@map("tech")
+  @@schema("public")
+}
+
+// Serene AI
+
+model Agent {
+  id                   String         @id @default(cuid())
+  userProfileId        String         @map("user_profile_id") @unique
+  userProfile          UserProfile    @relation(fields: [userProfileId], references: [id])
+  name                 String         @unique
+  role                 String
+  defaultPrompt        String?
+
+  ofChatSettings       ChatSettings[]
+
+  @@map("agent")
+  @@schema("public")
+}
+
+model ChatMessage {
+  // chatSessionId is optional to allow for direct messages.
+  id                           String            @id @default(cuid())
+  chatSessionId                String?           @map("chat_session_id")
+  chatSession                  ChatSession?      @relation(fields: [chatSessionId], references: [id])
+  fromChatParticipantId        String            @map("from_chat_participant_id")
+  fromChatParticipant          ChatParticipant   @relation("fromChatParticipant", fields: [fromChatParticipantId], references: [id])
+  toChatParticipantId          String?           @map("to_chat_participant_id")
+  toChatParticipant            ChatParticipant?  @relation("toChatParticipant", fields: [toChatParticipantId], references: [id])
+  sentByAi                     Boolean           @map("sent_by_ai")
+  message                      String
+  created                      DateTime          @default(now())
+  updated                      DateTime          @updatedAt
+
+  @@index([chatSessionId])
+  @@index([created])
+  @@map("chat_message")
+  @@schema("public")
+}
+
+model ChatParticipant {
+  // An optional projectId is available for use with inter-project chats.
+  id                            String               @id @default(cuid())
+  chatSessionId                 String               @map("chat_session_id")
+  chatSession                   ChatSession          @relation(fields: [chatSessionId], references: [id])
+  userProfileId                 String               @map("user_profile_id")
+  userProfile                   UserProfile          @relation(fields: [userProfileId], references: [id])
+
+  ofChatMessagesFrom            ChatMessage[]        @relation("fromChatParticipant")
+  ofChatMessagesTo              ChatMessage[]        @relation("toChatParticipant")
+
+  @@index([chatSessionId])
+  @@map("chat_participant")
+  @@schema("public")
+}
+
+model ChatSession {
+  id                           String               @id @default(cuid())
+  chatSettingsId               String               @map("chat_settings_id")
+  chatSettings                 ChatSettings         @relation(fields: [chatSettingsId], references: [id])
+  status                       String               @db.Char(1)
+  token                        String
+  name                         String?
+  createdById                  String               @map("created_by_id")
+  createdByUserProfile         UserProfile          @relation(fields: [createdById], references: [id])
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofChatMessages               ChatMessage[]
+  ofChatParticipants           ChatParticipant[]
+  ofInstanceChatSessions       InstanceChatSession[]
+
+  @@map("chat_session")
+  @@schema("public")
+}
+
+model ChatSettings {
+  id                           String               @id @default(cuid())
+  baseChatSettingsId           String?              @map("base_chat_settings_id")
+  baseChatSettings             ChatSettings?        @relation("base", fields: [baseChatSettingsId], references: [id])
+  status                       String               @db.Char(1)
+  pinned                       Boolean
+  name                         String?              @unique  // Only unique for baseChatSettingsId == null
+  llmTechId                    String?              @map("llm_tech_id")
+  llmTech                      Tech?                @relation(fields: [llmTechId], references: [id])
+  agentId                      String               @map("agent_id")
+  agent                        Agent                @relation(fields: [agentId], references: [id])
+  prompt                       String?
+  agentRole                    String?              @map("agent_role")
+  createdById                  String               @map("created_by_id")
+  createdByUserProfile         UserProfile          @relation(fields: [createdById], references: [id])
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofBaseChatSettings           ChatSettings[]       @relation("base")
+  ofChatSessions               ChatSession[]
+
+  @@map("chat_settings")
+  @@schema("public")
+}
+
+// Cache
+
+model CachedEmbedding {
+  id                           String               @id @default(cuid())
+  text                         String               @unique
+  embedding                    Unsupported("vector(768)")?
+  created                      DateTime             @default(now())
+
+  @@map("cached_embedding")
+  @@schema("public")
+}
+
+model LlmCache {
+  id                           String               @id @default(cuid())
+  key                          String               @unique
+  value                        String
+
+  @@map("llm_cache")
+  @@schema("public")
+}
+
+// Electra specific
+
+// Batch
+
+model BatchJob {
+  id                         String           @id @default(cuid())
+  instanceId                 String?          @map("instance_id")
+  instance                   Instance?        @relation(fields: [instanceId], references: [id])
+  userProfileId              String?          @map("user_profile_id")
+  userProfile                UserProfile?     @relation(fields: [userProfileId], references: [id])
+  runInATransaction          Boolean          @map("run_in_a_transaction")
+  status                     String           @db.Char(1)
+  progressPct                Int?             @map("progress_pct")
+  message                    String?
+  jobType                    String           @map("job_type")
+  refModel                   String?          @map("ref_model")
+  refId                      String?          @map("ref_id")
+  parameters                 String?          // Stringified JSON
+  created                    DateTime         @default(now())
+  updated                    DateTime         @updatedAt
+
+  @@index([refId])
+  @@map("batch_job")
+  @@schema("public")
+}
+
+// Chats
+model InstanceChatSession {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  createdById                  String               @map("created_by_id")
+  createdBy                    UserProfile          @relation(fields: [createdById], references: [id])
+  chatSessionId                String               @map("chat_session_id") @unique
+  chatSession                  ChatSession          @relation(fields: [chatSessionId], references: [id])
+  issueId                      String?              @map("issue_id")
+  issue                        Issue?               @relation(fields: [issueId], references: [id])
+  proposalId                   String?              @map("proposal_id")
+  proposal                     Proposal?            @relation(fields: [proposalId], references: [id])
+  created                      DateTime             @default(now())
+
+  @@map("instance_chat_session")
+  @@schema("public")
+}
+
+// Language and translations
+
+model DbField {
+  id                           String               @id @default(cuid())
+  name                         String
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofLangTranslation            LangTranslation[]
+
+  @@map("db_field")
+  @@schema("public")
+}
+
+model DbModel {
+  id                           String               @id @default(cuid())
+  name                         String
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofLangTranslation            LangTranslation[]
+
+  @@map("db_model")
+  @@schema("public")
+}
+
+model Lang {
+  id                           String               @id @default(cuid())
+  iso639_2Code                 String               @map("iso639_2_code") @unique  // Use the ISO 639.2, 3 letter code, for widest language availability
+  iso639_1Code                 String?              @map("iso639_1_code")          // The ISO 639.1, 2 letter code
+  name                         String               @unique
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofLangTranslation            LangTranslation[]
+
+  ofInstances                  Instance[]
+  ofLegalGeoLangs              LegalGeoLang[]
+
+  @@map("lang")
+  @@schema("public")
+}
+
+model LangTranslation {
+  id                           String               @id @default(cuid())
+  dbModelId                    String               @map("db_model_id")
+  dbModel                      DbModel              @relation(fields: [dbModelId], references: [id])
+  dbFieldId                    String               @map("db_field_id")
+  dbField                      DbField              @relation(fields: [dbFieldId], references: [id])
+  langId                       String               @map("lang_id")
+  lang                         Lang                 @relation(fields: [langId], references: [id])
+  text                         String
+
+  @@map("lang_translation")
+  @@schema("public")
+}
+
+// Legal geography
+
+model LegalGeo {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       LegalGeo?            @relation("parent", fields: [parentId], references: [id])
+  legalGeoTypeId               String               @map("legal_geo_type_id")
+  legalGeoType                 LegalGeoType         @relation(fields: [legalGeoTypeId], references: [id])
+  country2LetterCode           String?              @map("country_2_letter_code")
+  name                         String
+  emoji                        String?
+  sourceDataId                 String?              @map("source_data_id")
+
+  ofInstances                  Instance[]
+  ofLegalGeos                  LegalGeo[]           @relation("parent")
+  ofLegalGeoLangs              LegalGeoLang[]
+
+  @@unique([parentId, name], name: "legal_geo_uq")
+  @@map("legal_geo")
+  @@schema("public")
+}
+
+model LegalGeoLang {
+  id                           String               @id @default(cuid())
+  legalGeoId                   String               @map("legal_geo_id")
+  legalGeo                     LegalGeo             @relation(fields: [legalGeoId], references: [id])
+  langId                       String               @map("lang_id")
+  lang                         Lang                 @relation(fields: [langId], references: [id])
+  default                      Boolean
+
+  @@unique([legalGeoId, langId], name: "legal_geo_lang_uq")
+  @@map("legal_geo_lang")
+  @@schema("public")
+}
+
+model LegalGeoType {
+  id                           String               @id @default(cuid())
+  name                         String               @unique
+
+  ofLegalGeos                  LegalGeo[]
+
+  @@map("legal_geo_type")
+  @@schema("public")
+}
+
+// Instance/setup
+
+model Instance {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       Instance?            @relation("parent", fields: [parentId], references: [id])
+  instanceType                 String               @map("instance_type") @db.Char(1)  // D: demo, R: real, T: template
+  orgType                      String               @map("org_type") @db.Char(1)       // B: business, N: non-profit, P: political, G: government
+  status                       String
+  legalGeoId                   String?              @map("legal_geo_id")  // Required for a politics instanceType, optional for business/non-profit
+  legalGeo                     LegalGeo?            @relation(fields: [legalGeoId], references: [id])
+  defaultLangId                String               @map("default_lang_id")
+  defaultLang                  Lang                 @relation(fields: [defaultLangId], references: [id])
+  createdById                  String               @map("created_by_id")
+  createdBy                    UserProfile          @relation(fields: [createdById], references: [id])
+  publicAccess                 String?              @map("public_access") @db.Char(1)  // Null (no access), R or W
+  name                         String
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+  deleted                      DateTime?
+
+  ofBatchJobs                  BatchJob[]
+  ofInstanceChatSession        InstanceChatSession[]
+  ofInstances                  Instance[]           @relation("parent")
+  ofInstanceSettings           InstanceSetting[]
+  ofIssueTagOptions            IssueTagOption[]
+  ofKbFiles                    KbFile[]
+  ofKbFileExtracts             KbFileExtract[]
+  ofNewsArticleInstances       NewsArticleInstance[]
+  ofNewsArticleIssues          NewsArticleIssue[]
+  ofNewsArticleQueries         NewsArticleQuery[]
+  ofProposals                  Proposal[]
+  ofProposalsPublished         ProposalPublished[]
+  ofProposalTagOptions         ProposalTagOption[]
+  ofIssues                     Issue[]
+  ofTasks                      Task[]
+  ofVoteObjects                VoteObject[]
+  ofVotes                      Vote[]
+  ofVotesPublishQueue          VotePublishQueue[]
+
+  @@unique([parentId, name], name: "instance_uq")
+  @@map("instance")
+  @@schema("public")
+}
+
+model InstanceSetting {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  name                         String
+  value                        String
+
+  @@unique([instanceId, name], name: "instance_setting_uq")
+  @@map("instance_setting")
+  @@schema("public")
+}
+
+// Issues
+
+model Issue {
+  // Uses KbFile.status as the status
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       Issue?               @relation("parent", fields: [parentId], references: [id])
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  kbFileId                     String               @map("kb_file_id") @unique
+  kbFile                       KbFile               @relation(fields: [kbFileId], references: [id])
+  created                      DateTime             @default(now())
+
+  ofInstanceChatSessions       InstanceChatSession[]
+  ofIssues                     Issue[]              @relation("parent")
+  ofIssueTags                  IssueTag[]
+  ofNewsArticleIssues          NewsArticleIssue[]
+  ofProposals                  Proposal[]
+
+  @@map("issue")
+  @@schema("public")
+}
+
+model IssueTag {
+  id                           String               @id @default(cuid())
+  issueId                      String               @map("issue_id")
+  issue                        Issue                @relation(fields: [issueId], references: [id])
+  issueTagOptionId             String               @map("issue_tag_option_id")
+  issueTagOption               IssueTagOption       @relation(fields: [issueTagOptionId], references: [id])
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@index([issueId])
+  @@index([issueTagOptionId])
+  @@unique([issueId, issueTagOptionId], name: "issue_tag_uq")
+  @@map("issue_tag")
+  @@schema("public")
+}
+
+model IssueTagOption {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       IssueTagOption?      @relation("parent", fields: [parentId], references: [id])
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  name                         String
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofIssueTags                  IssueTag[]
+  ofIssueTagOptions            IssueTagOption[]     @relation("parent")
+
+  @@unique([parentId, name, instanceId], name: "issue_tag_option_uq")
+  @@map("issue_tag_option")
+  @@schema("public")
+}
+
+// Proposals
+
+model Proposal {
+  // Uses KbFile.status as the status
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  kbFileId                     String               @map("kb_file_id") @unique
+  kbFile                       KbFile               @relation(fields: [kbFileId], references: [id])
+  issueId                      String               @map("issue_id")
+  issue                        Issue                @relation(fields: [issueId], references: [id])
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofInstanceChatSessions       InstanceChatSession[]
+  ofProposalsPublished         ProposalPublished[]
+  ofProposalTags               ProposalTag[]
+
+  @@index([issueId])
+  @@map("proposal")
+  @@schema("public")
+}
+
+model ProposalPublished {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  proposalId                   String               @map("proposal_id") @unique
+  proposal                     Proposal             @relation(fields: [proposalId], references: [id])
+
+  @@index([instanceId])
+  @@map("proposal_published")
+  @@schema("public")
+}
+
+model ProposalTag {
+  id                           String               @id @default(cuid())
+  proposalId                   String               @map("proposal_id")
+  proposal                     Proposal             @relation(fields: [proposalId], references: [id])
+  proposalTagOptionId          String               @map("proposal_tag_option_id")
+  proposalTagOption            ProposalTagOption    @relation(fields: [proposalTagOptionId], references: [id])
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@index([proposalId])
+  @@index([proposalTagOptionId])
+  @@unique([proposalId, proposalTagOptionId], name: "proposal_tag_uq")
+  @@map("proposal_tag")
+  @@schema("public")
+}
+
+model ProposalTagOption {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       ProposalTagOption?   @relation("parent", fields: [parentId], references: [id])
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  name                         String
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofProposalTags               ProposalTag[]
+  ofProposalTagOptions         ProposalTagOption[]  @relation("parent")
+
+  @@unique([parentId, name, instanceId], name: "proposal_tag_option_uq")
+  @@map("proposal_tag_option")
+  @@schema("public")
+}
+
+// Generic work with model
+
+model ModelAttach {
+  id                           String               @id @default(cuid())
+  model                        String
+  relation                     String               // E.g. 1:n (one-to-many)
+  attachModel                  String               @map("attach_model")
+
+  @@map("model_attach")
+  @@schema("public")
+}
+
+model ModelAttachFeature {
+  // Assume a 1:1 relation
+  id                           String               @id @default(cuid())
+  model                        String
+  attachFeature                String               @map("attach_feature")
+
+  @@map("model_attach_feature")
+  @@schema("public")
+}
+
+// Voting
+
+model Vote {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  voteObjectId                 String               @map("vote_object_id")
+  voteObject                   VoteObject           @relation(fields: [voteObjectId], references: [id])
+  userProfileId                String?              @map("user_profile_id")
+  userProfile                  UserProfile?         @relation(fields: [userProfileId], references: [id])
+  voterIdType                  String?              @map("voter_id_type")  // Some external systems might have multiple id types (e.g. phone and email)
+  voterId                      String?              @map("voter_id")       // If a unique identifier is available for the person voting
+  voteType                     String?              @map("vote_type")      // E.g. Y: yes (for), N: no (against), only specified if Y is not the only answer
+  voted                        DateTime?                                   // When the vote was cast (especially for external systems, if available)
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofVotesPublishQueue          VotePublishQueue[]
+
+  @@index([voteObjectId])
+  @@unique([voteObjectId, userProfileId], name: "vote_uq_1")
+  @@unique([voteObjectId, voterId], name: "vote_uq_2")
+  @@map("vote")
+  @@schema("public")
+}
+
+model VoteObject {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  refModel                     String               @map("ref_model")
+  refId                        String               @map("ref_id")
+  voteSystemId                 String               @map("vote_system_id")
+  voteSystem                   VoteSystem           @relation(fields: [voteSystemId], references: [id])
+
+  ofVotes                      Vote[]
+
+  @@index([refId])
+  @@map("vote_object")
+  @@schema("public")
+}
+
+model VoteObjectAgg {
+  // An aggregation of votes per issueId/voteType
+  id                           String               @id @default(cuid())
+  refModel                     String               @map("ref_model")
+  refId                        String               @map("ref_id")
+  voteType                     String?              // If not Y, then a vote type
+  votes                        BigInt?              // The votes could be unknown (for external systems)
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@unique([refId, refModel, voteType], name: "vote_on_model_agg_uq")
+  @@map("vote_object_agg")
+  @@schema("public")
+}
+
+model VotePublishQueue {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  voteId                       String               @map("vote_id") @unique
+  vote                         Vote                 @relation(fields: [voteId], references: [id])
+
+  @@index([instanceId])
+  @@map("vote_publish_queue")
+  @@schema("public")
+}
+
+model VoteSystem {
+  id                           String               @id @default(cuid())
+  isDefault                    Boolean              @map("is_default")
+  isWeighted                   Boolean              @map("is_weighted")  // Is each vote weighted in some way?
+  isFullyExternal              Boolean              @map("is_fully_external")
+  isBlockchainBased            Boolean              @map("is_blockchain_based")
+  isBooleanVoteType            Boolean              @map("is_boolean_vote_type")
+  voteOptions                  String[]             @map("vote_options")      // Only specify if the vote isn't boolean
+  voteTypeSystem               String?              @map("vote_type_system")  // E.g. Y/N
+  name                         String               @unique
+  url                          String?
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofVoteObjects                VoteObject[]
+
+  @@map("vote_system")
+  @@schema("public")
+}
+
+// Knowledge base
+
+model KbFile {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       KbFile?              @relation("parent", fields: [parentId], references: [id])
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  createdById                  String               @map("created_by_id")
+  createdByUserProfile         UserProfile          @relation("created_by", fields: [createdById], references: [id])
+  assignedToId                 String?              @map("assigned_to_id")
+  assignedToUserProfile        UserProfile?         @relation("assigned_to", fields: [assignedToId], references: [id])
+  taskId                       String?              @map("task_id")
+  task                         Task?                @relation(fields: [taskId], references: [id])
+  publicAccess                 String?              @map("public_access") @db.Char(1)  // Null (no access), R or W
+  refModel                     String?              @map("ref_model")  // Which model (if any) is this related to? (E.g. Issue)
+  status                       String
+  format                       String               // E.g. dir (directory/folder), txt, md, js, jpg (what would be indicated by an extension)
+  name                         String
+  tags                         String[]
+  embedding                    Unsupported("vector(768)")?
+  embeddingGenerated           DateTime?            @map("embedding_generated")
+  refreshEmbedding             Boolean              @map("refresh_embedding")
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  kbFileContent                KbFileContent?       // 1-to-1 mapping
+  ofKbFiles                    KbFile[]             @relation("parent")
+  ofIssues                     Issue[]
+  ofProposals                  Proposal[]
+
+  @@index([parentId])
+  @@unique([parentId, name, instanceId], name: "kb_file_uq")
+  @@map("kb_file")
+  @@schema("public")
+}
+
+model KbFileContent {
+  // // Google's embedding models all use a 768 dimension output.
+  // Source: https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings
+  id                           String               @id @default(cuid())
+  kbFileId                     String               @map("kb_file_id") @unique
+  kbFile                       KbFile               @relation(fields: [kbFileId], references: [id])
+  text                         String?
+  summary                      String?
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@map("kb_file_content")
+  @@schema("public")
+}
+
+model KbFileExtract {
+  // Extracts from various KB files/contents, useful for batch processing.
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  purpose                      String
+  text                         String?
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@unique([instanceId, purpose])
+  @@map("kb_file_extract")
+  @@schema("public")
+}
+
+// News articles (imported via APIs)
+
+model NewsArticle {
+  id                           String               @id @default(cuid())
+  newsSourceId                 String               @map("news_source_id")
+  newsSource                   NewsSource           @relation(fields: [newsSourceId], references: [id])
+  entryType                    String               @map("entry_type") @db.Char(1)  // L: lead, C: content
+  country2LetterCode           String?              @map("country_2_letter_code")
+  author                       String
+  title                        String
+  url                          String
+  urlImage                     String?              @map("url_image")
+  description                  String?
+  content                      String?
+  published                    DateTime
+  embedding                    Unsupported("vector(768)")?
+  embeddingGenerated           DateTime?            @map("embedding_generated")
+  refreshEmbedding             Boolean              @map("refresh_embedding")
+  created                      DateTime             @default(now())
+
+  ofNewsArticleInstances       NewsArticleInstance[]
+  ofNewsArticleIssues          NewsArticleIssue[]
+
+  @@unique([url, entryType])
+  @@map("news_article")
+  @@schema("public")
+}
+
+model NewsArticleInstance {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  newsArticleId                String               @map("news_article_id")
+  newsArticle                  NewsArticle          @relation(fields: [newsArticleId], references: [id])
+  batchProcessed               Boolean              @map("batch_processed")
+  created                      DateTime             @default(now())
+
+  @@unique([newsArticleId, instanceId])
+  @@map("news_article_instance")
+  @@schema("public")
+}
+
+model NewsArticleIssue {
+  // Issues can be generated from multiple news articles, which is why
+  // newsArticleId isn't a field for this model.
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  issueId                      String               @map("issue_id")
+  issue                        Issue                @relation(fields: [issueId], references: [id])
+  newsArticleId                String               @map("news_article_id")
+  newsArticle                  NewsArticle          @relation(fields: [newsArticleId], references: [id])
+  batchProcessed               Boolean              @map("batch_processed")
+  created                      DateTime             @default(now())
+
+  @@unique([newsArticleId, issueId])
+  @@map("news_article_issue")
+  @@schema("public")
+}
+
+model NewsArticleQuery {
+  id                           String               @id @default(cuid())
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  topic                        String
+  query                        String
+  created                      DateTime             @default(now())
+
+  @@unique([query, topic, instanceId])
+  @@map("news_article_query")
+  @@schema("public")
+}
+
+model NewsSource {
+  id                           String               @id @default(cuid())
+  name                         String               @unique
+
+  ofNewsArticles               NewsArticle[]
+
+  @@map("news_source")
+  @@schema("public")
+}
+
+// Tasks
+
+model Task {
+  // The tasks with null parentIds could be projects
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       Task?                @relation("parent", fields: [parentId], references: [id])
+  instanceId                   String               @map("instance_id")
+  instance                     Instance             @relation(fields: [instanceId], references: [id])
+  createdById                  String               @map("created_by_id")
+  createdByUserProfile         UserProfile          @relation("created_by", fields: [createdById], references: [id])
+  assignedToId                 String?              @map("assigned_to_id")
+  assignedToUserProfile        UserProfile?         @relation("assigned_to", fields: [assignedToId], references: [id])
+  importance                   Int?
+  urgency                      Int?
+  name                         String
+  when                         String?
+  description                  String?
+  summary                      String?
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  ofKbFiles                    KbFile[]
+  ofTasks                      Task[]               @relation("parent")
+  ofTaskNotes                  TaskNote[]
+
+  @@map("task")
+  @@schema("public")
+}
+
+model TaskNote {
+  id                           String               @id @default(cuid())
+  taskId                       String?              @map("task_id")
+  task                         Task?                @relation(fields: [taskId], references: [id])
+  createdById                  String               @map("created_by_id")
+  createdByUserProfile         UserProfile          @relation("created_by", fields: [createdById], references: [id])
+  note                         String
+  summary                      String?
+  created                      DateTime             @default(now())
+  updated                      DateTime             @updatedAt
+
+  @@map("task_note")
+  @@schema("public")
+}

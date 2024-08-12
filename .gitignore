@@ -1,0 +1,8 @@
+nextjs/client/scripts/production*
+nextjs/client/.env.production*
+nextjs/server/.env.development
+nextjs/server/.env.production*
+nextjs/server/scripts/production*
+nextjs/server/hardhat
+scripts
+staging/*.7z

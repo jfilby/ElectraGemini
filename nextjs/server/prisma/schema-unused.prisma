@@ -1,0 +1,92 @@
+// These models are currently unused, but could be used in the future
+
+// Navigation and filters
+
+model UiFilter {
+  id                           String               @id @default(cuid())
+  uiNavId                      String               @map("ui_nav_id")
+  uiNav                        UiNav                @relation(fields: [uiNavId], references: [id])
+  parentId                     String?              @map("parent_id")
+  parent                       UiFilter?            @relation("parent", fields: [parentId], references: [id])
+  name                         String
+  defaultSortBy                String?              @map("default_sort_by")
+
+  ofUiFilters                  UiFilter[]           @relation("parent")
+  ofUiFilterItems              UiFilterItem[]
+
+  @@map("ui_filter")
+  @@schema("public")
+}
+
+model UiFilterItem {
+  id                           String               @id @default(cuid())
+  uiFilterId                   String               @map("ui_filter_id")
+  uiFilter                     UiFilter             @relation(fields: [uiFilterId], references: [id])
+  name                         String
+  orderInFilter                Int?                 @map("order_in_filter")
+
+  @@map("ui_filter_item")
+  @@schema("public")
+}
+
+model UiNav {
+  id                           String               @id @default(cuid())
+  parentId                     String?              @map("parent_id")
+  parent                       UiNav?               @relation("parent", fields: [parentId], references: [id])
+  name                         String
+  urlPath                      String               @map("url_path")
+
+  ofUiFIlters                  UiFilter[]
+  ofUiNavs                     UiNav[]              @relation("parent")
+
+  @@map("ui_nav")
+  @@schema("public")
+}
+
+// Knowledge base (related)
+
+model KbFileSharedWithGroup {
+  id                           String               @id @default(cuid())
+  kbFileId                     String               @map("kb_file_id")
+  kbFile                       KbFile               @relation(fields: [kbFileId], references: [id])
+  userGroupId                  String?              @map("with_user_group_id")
+  userGroup                    UserGroup?           @relation(fields: [userGroupId], references: [id])
+
+  @@map("kb_file_shared_with_group")
+  @@schema("public")
+}
+
+model KbFileSharedWithUser {
+  id                           String               @id @default(cuid())
+  kbFileId                     String               @map("kb_file_id")
+  kbFile                       KbFile               @relation(fields: [kbFileId], references: [id])
+  userProfileId                String               @map("user_profile_id")
+  userProfile                  UserProfile          @relation(fields: [userProfileId], references: [id])
+
+  @@map("kb_file_shared_with_user")
+  @@schema("public")
+}
+
+model KbFileDependency {
+  id                           String               @id @default(cuid())
+  kbFileDependentId            String               @map("kb_file_dependent_id")
+  kbFileDependent              KbFile               @relation("kb_file_dependent", fields: [kbFileDependentId], references: [id])
+  kbFileDependencyId           String               @map("kb_file_dependency_id")
+  kbFileDependency             KbFile               @relation("kb_file_dependency", fields: [kbFileDependencyId], references: [id])
+  created                      DateTime             @default(now())
+
+  @@map("kb_file_dependency")
+  @@schema("public")
+}
+
+model KbFileTaskDependency {
+  id                           String               @id @default(cuid())
+  kbFileDependentId            String               @map("kb_file_dependent_id")
+  kbFileDependent              KbFile               @relation(fields: [kbFileDependentId], references: [id])
+  taskDependencyId             String               @map("task_dependency_id")
+  taskDependency               Task                 @relation(fields: [taskDependencyId], references: [id])
+  created                      DateTime             @default(now())
+
+  @@map("kb_file_task_dependency")
+  @@schema("public")
+}
